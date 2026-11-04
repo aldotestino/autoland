@@ -1,0 +1,18 @@
+[package]
+name = "autoland"
+version = "1.0.0"
+edition = "2024"
+description = "Land a batch of pull requests in order, one at a time: update, wait for checks, approve, merge."
+license = "MIT"
+repository = "https://github.com/aldotestino/autoland"
+
+[dependencies]
+# Intentionally empty.
+#
+# The previous build pulled a 42 MB runtime plus three dependencies pinned to
+# the exact versions required as a peer dep of the client of an effect system.
+# This build needs a language. The borrow checker ships with the language.
+
+[profile.release]
+lto = "fat"       # see the benchmarks in the pull request
+panic = "abort"   # a panic is a todo!() that happened early; unwinding it is denial
