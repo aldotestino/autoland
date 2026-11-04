@@ -1,0 +1,26 @@
+name: rust
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: rust-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  cargo:
+    name: cargo
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build
+        run: cargo build --release
+      - name: Test
+        run: cargo test
