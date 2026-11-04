@@ -39,7 +39,7 @@
     "prepare": "effect-tsgo patch --typescript --oxlint --tsrs",
     "release": "bun scripts/prepare-release.ts && changeset publish",
     "test": "vitest run",
-    "typecheck": "tsrs --noEmit --fast",
+    "typecheck": "tsrs --noEmit",
     "version-packages": "changeset version && bun install"
   },
   "dependencies": {
