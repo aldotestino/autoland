@@ -1,12 +1,16 @@
 {
-  "name": "effect-scratchpad",
+  "name": "autoland",
+  "version": "0.1.0",
   "private": true,
+  "bin": {
+    "autoland": "src/cli.ts"
+  },
   "type": "module",
-  "module": "index.ts",
+  "module": "src/cli.ts",
   "scripts": {
-    "server:dev": "bun --watch src/server.ts",
-    "server": "bun src/server.ts",
-    "cli": "bun src/cli.ts",
+    "autoland": "bun src/cli.ts",
+    "build": "bun build src/cli.ts --compile --outfile dist/autoland",
+    "test": "vitest run",
     "lint": "oxlint",
     "lint:fix": "oxlint --fix",
     "fmt": "oxfmt",
@@ -15,19 +19,25 @@
     "prepare": "effect-tsgo patch --typescript --oxlint --tsrs"
   },
   "dependencies": {
-    "@effect/platform-bun": "^4.1.1",
-    "effect": "^4.1.1"
+    "@effect/platform-bun": "4.0.6",
+    "@opencode/client": "2.2.5",
+    "effect": "4.0.6"
   },
   "devDependencies": {
     "@effect/tsgo": "0.63.0",
+    "@effect/vitest": "4.0.6",
     "@types/bun": "1.4.4",
     "oxfmt": "^0.74.0",
     "oxlint": "1.89.0",
     "oxlint-tsgolint": "7.0.2005",
     "tsrs": "0.20.1-ts7.1.0-beta",
-    "typescript": "^7.1.0-beta"
+    "typescript": "^7.1.0-beta",
+    "vitest": "^5.0.0"
   },
   "peerDependencies": {
     "typescript": "^7.0.2"
+  },
+  "overrides": {
+    "@effect/platform-node-shared": "4.0.6"
   }
 }
