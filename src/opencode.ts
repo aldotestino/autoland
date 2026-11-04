@@ -57,6 +57,34 @@ export const permissionChoices = (ask: PermissionDetails) => [
   { title: "Reject", value: "reject" as PermissionDecision },
 ];
 
+/** What a permission's watcher cares about in the event stream. */
+export type ReplySignal = "connected" | "replied" | "other";
+
+/**
+ * Settles once a request has been answered somewhere else, such as an attached
+ * OpenCode UI. A reply can land before this subscription connects, so the request
+ * is rechecked on connecting. A dropped stream or a failed check proves nothing,
+ * so neither settles: a person at the prompt must never lose it without an answer.
+ */
+export const settledElsewhere = <E, E2>(
+  signals: Stream.Stream<ReplySignal, E>,
+  stillPending: Effect.Effect<boolean, E2>,
+): Effect.Effect<void> =>
+  signals.pipe(
+    Stream.mapEffect((signal) => {
+      if (signal === "replied") return Effect.succeed(true);
+      if (signal === "other") return Effect.succeed(false);
+      return stillPending.pipe(
+        Effect.map((pending) => !pending),
+        Effect.orElseSucceed(() => false),
+      );
+    }),
+    Stream.filter((settled) => settled),
+    Stream.runHead,
+    Effect.flatMap((settled) => (Option.isSome(settled) ? Effect.void : Effect.never)),
+    Effect.catch(() => Effect.never),
+  );
+
 const describe = (cause: unknown): string =>
   typeof cause === "object" &&
   cause !== null &&
@@ -81,6 +109,56 @@ const lastReport = (client: OpenCodeClient, sessionID: SessionID) =>
     ),
     Effect.orElseSucceed(() => ""),
   );
+
+/** Asks on the terminal, unless the request gets answered elsewhere first. */
+export const answerPermission = Effect.fn("answerPermission")(function* (
+  opencode: OpenCodeClient,
+  sessionID: SessionID,
+  ask: PermissionAsk,
+) {
+  const ui = yield* Ui;
+  const tty = yield* Tty;
+
+  const answer = yield* Effect.raceFirst(
+    ui.pausing(
+      tty.prompt(
+        Prompt.Select({
+          message: permissionQuestion(ask),
+          choices: permissionChoices(ask),
+        }),
+      ),
+    ),
+    settledElsewhere(
+      opencode.event.subscribe({ types: ["permission.replied"] }).pipe(
+        Stream.map((event): ReplySignal => {
+          if (event.type === "server.connected") return "connected";
+          return event.type === "permission.replied" && event.data.requestID === ask.id
+            ? "replied"
+            : "other";
+        }),
+      ),
+      opencode.permission
+        .list({ sessionID })
+        .pipe(Effect.map((pending) => pending.some((request) => request.id === ask.id))),
+    ).pipe(Effect.as(undefined)),
+  );
+  if (answer === undefined) {
+    // The dismissed prompt is still on screen, so move below it.
+    yield* ui.log("\nAnswered in OpenCode's UI.");
+    return;
+  }
+  yield* opencode.permission
+    .reply({
+      sessionID,
+      requestID: ask.id,
+      decision: Option.getOrElse(answer, () => "reject" as const),
+    })
+    .pipe(
+      // Answered elsewhere in the moment before this reply, which is fine.
+      Effect.catchTag("PermissionNotFoundError", () => Effect.void),
+      Effect.catch((cause) => ui.error(`Cannot answer OpenCode's request: ${describe(cause)}`)),
+    );
+});
 
 /** Runs agent sessions on the local OpenCode background service. */
 export class Agent extends Context.Service<
@@ -136,48 +214,14 @@ export class Agent extends Context.Service<
           const seen = new Set<string>();
           let promptSent = false;
 
-          const askUser = (ask: PermissionAsk) =>
-            ui.pausing(
-              tty.prompt(
-                Prompt.Select({
-                  message: permissionQuestion(ask),
-                  choices: permissionChoices(ask),
-                }),
-              ),
-            );
-
-          /** It may also be answered in an attached OpenCode UI, which settles the prompt. */
-          const answeredElsewhere = (requestID: RequestID) =>
-            opencode.event.subscribe({ types: ["permission.replied"] }).pipe(
-              Stream.filter(
-                (event) =>
-                  event.type === "permission.replied" && event.data.requestID === requestID,
-              ),
-              Stream.runHead,
-              Effect.ignore,
-              Effect.andThen(Effect.never),
-            );
-
           const handlePermission = (ask: PermissionAsk) =>
             Effect.gen(function* () {
               if (seen.has(ask.id)) return;
               seen.add(ask.id);
-              const answer = yield* Effect.raceFirst(
-                askUser(ask),
-                answeredElsewhere(ask.id).pipe(Effect.as(undefined)),
+              yield* answerPermission(opencode, sessionID, ask).pipe(
+                Effect.provideService(Ui, ui),
+                Effect.provideService(Tty, tty),
               );
-              if (answer === undefined) return;
-              yield* opencode.permission
-                .reply({
-                  sessionID,
-                  requestID: ask.id,
-                  decision: Option.getOrElse(answer, () => "reject" as const),
-                })
-                .pipe(
-                  Effect.catch((cause) =>
-                    ui.error(`Cannot answer OpenCode's request: ${describe(cause)}`),
-                  ),
-                );
             });
 
           const handleForm = (form: { readonly id: string; readonly title: string }) =>
@@ -185,10 +229,8 @@ export class Agent extends Context.Service<
               if (seen.has(form.id)) return;
               seen.add(form.id);
               yield* tty.notify("OpenCode needs an answer", "A repair session is waiting");
-              yield* ui.pausing(
-                ui.log(
-                  `OpenCode has a question only its UI can show: ${sanitizeText(form.title)}\nAnswer it with:\n  ${attach}`,
-                ),
+              yield* ui.log(
+                `OpenCode has a question only its UI can show: ${sanitizeText(form.title)}\nAnswer it with:\n  ${attach}`,
               );
             });
 

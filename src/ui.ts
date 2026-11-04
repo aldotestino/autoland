@@ -51,6 +51,27 @@ export class Ui extends Context.Service<
         return Fiber.interrupt(running).pipe(Effect.andThen(write(CLEAR_LINE)));
       });
 
+      const spin = (text: string) =>
+        Effect.suspend(() =>
+          // A pause inside a pause must not leave a second spinner running.
+          spinner !== undefined
+            ? Effect.void
+            : animate(text).pipe(
+                Effect.forkIn(scope),
+                Effect.map((fiber) => {
+                  spinner = fiber;
+                }),
+              ),
+        );
+
+      const pausing = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+        stopSpinner.pipe(
+          Effect.andThen(effect),
+          Effect.ensuring(
+            Effect.suspend(() => (canAnimate && current !== "" ? spin(current) : Effect.void)),
+          ),
+        );
+
       const finish = (success: boolean, text?: string) =>
         Effect.gen(function* () {
           const line = text ?? current;
@@ -71,14 +92,6 @@ export class Ui extends Context.Service<
           }
         });
 
-      const spin = (text: string) =>
-        animate(text).pipe(
-          Effect.forkIn(scope),
-          Effect.map((fiber) => {
-            spinner = fiber;
-          }),
-        );
-
       const start = (text: string) =>
         Effect.gen(function* () {
           if (current === text) return;
@@ -92,18 +105,13 @@ export class Ui extends Context.Service<
         });
 
       return Ui.of({
-        log: (text) => write(`${text}\n`),
-        error: (text) => writeError(`${text}\n`),
+        // Through `pausing`, or the text would land on the end of the spinner's line.
+        log: (text) => pausing(write(`${text}\n`)),
+        error: (text) => pausing(writeError(`${text}\n`)),
         current: Effect.sync(() => current),
         start,
         finish,
-        pausing: (effect) =>
-          stopSpinner.pipe(
-            Effect.andThen(effect),
-            Effect.ensuring(
-              Effect.suspend(() => (canAnimate && current !== "" ? spin(current) : Effect.void)),
-            ),
-          ),
+        pausing,
       });
     }),
   );
