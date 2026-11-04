@@ -1,63 +1,21 @@
 #!/usr/bin/env bun
 import { BunHttpClient, BunRuntime, BunServices } from "@effect/platform-bun";
-import { Effect, Layer, Runtime, Schema } from "effect";
-import { Argument, Command, Flag } from "effect/cli";
+import { Effect, Layer, Runtime } from "effect";
+import { Command } from "effect/cli";
 import { Otlp, OtlpSerialization } from "effect/observability";
 import packageJson from "../package.json";
 import { runBatch } from "./batch";
-import { MergeMethod, UsageError } from "./domain";
+import { UsageError } from "./domain";
 import { GitHub } from "./github";
 import { Agent } from "./opencode";
+import { params } from "./params";
 import { Repair } from "./repair";
 import { Tty } from "./tty";
 import { Ui } from "./ui";
 
-const Label = Schema.String.check(
-  Schema.isMinLength(1),
-  Schema.makeFilter((label: string) => !label.startsWith("--") || "Label must not be an option"),
-  Schema.makeFilter(
-    (label: string) => !label.includes(",") || "Pass each label with a separate --label option",
-  ),
-);
-
-const Timeout = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 999_999 }));
-
 const mergePrs = Command.make(
   "autoland",
-  {
-    prs: Argument.String("pr").pipe(
-      Argument.withDescription(
-        "PR numbers, #numbers, or pull request URLs, separated by spaces, commas, or newlines",
-      ),
-      Argument.variadic(),
-    ),
-    method: Flag.Literals("method", MergeMethod.literals).pipe(
-      Flag.withDescription("Merge method (default: squash)"),
-      Flag.withDefault("squash"),
-    ),
-    timeout: Flag.Int("timeout").pipe(
-      Flag.withDescription("Maximum wait per PR, in seconds (default: 1800)"),
-      Flag.withSchema(Timeout),
-      Flag.withDefault(1800),
-    ),
-    labels: Flag.String("label").pipe(
-      Flag.withDescription("Require this label (repeatable; all must match)"),
-      Flag.withSchema(Label),
-      Flag.atLeast(0),
-    ),
-    dryRun: Flag.Boolean("dry-run").pipe(
-      Flag.withDescription("Read-only preview; no updates, merges, or repairs"),
-      Flag.withDefault(false),
-    ),
-    yes: Flag.Boolean("yes").pipe(
-      Flag.withDescription("Skip the initial batch confirmation"),
-      Flag.withDefault(false),
-    ),
-    nonInteractive: Flag.Boolean("non-interactive").pipe(
-      Flag.withDescription("Skip all prompts and leave conflicts unmerged"),
-      Flag.withDefault(false),
-    ),
-  },
+  params,
   Effect.fn("autoland")(function* ({ dryRun, labels, method, nonInteractive, prs, timeout, yes }) {
     yield* runBatch({
       inputs: prs,
