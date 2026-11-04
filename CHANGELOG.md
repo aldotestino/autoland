@@ -1,5 +1,11 @@
 # @aldotestino/autoland
 
+## 1.0.0
+
+### Major Changes
+
+- Rewritten in Rust. No functional changes. Version 1.0.0 because the language changed, which semver does not cover. I checked.
+
 ## 0.1.0
 
 ### Minor Changes
