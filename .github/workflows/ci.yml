@@ -21,7 +21,7 @@ jobs:
       # Report every check, rather than stopping at the first failure.
       fail-fast: false
       matrix:
-        script: [typecheck, lint, "fmt:check", test]
+        script: [typecheck, lint, "fmt:check", test, "build:npm"]
     steps:
       - uses: actions/checkout@v7
       - uses: oven-sh/setup-bun@v2

@@ -3,6 +3,7 @@ import { BunHttpClient, BunRuntime, BunServices } from "@effect/platform-bun";
 import { Effect, Layer, Runtime, Schema } from "effect";
 import { Argument, Command, Flag } from "effect/cli";
 import { Otlp, OtlpSerialization } from "effect/observability";
+import packageJson from "../package.json";
 import { runBatch } from "./batch";
 import { MergeMethod, UsageError } from "./domain";
 import { GitHub } from "./github";
@@ -104,7 +105,7 @@ process.once("SIGTERM", () => {
 });
 
 mergePrs.pipe(
-  Command.run({ version: "0.1.0" }),
+  Command.run({ version: packageJson.version }),
   // Help has already been rendered. Invalid input keeps the documented status.
   Effect.catchTag("ShowHelp", (error) =>
     error.errors.length === 0

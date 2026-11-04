@@ -1,22 +1,46 @@
 {
-  "name": "autoland",
-  "version": "0.1.0",
-  "private": true,
+  "name": "@aldotestino/autoland",
+  "version": "0.0.0",
+  "description": "Land a batch of pull requests in order, one at a time: update, wait for checks, approve, merge.",
+  "keywords": [
+    "cli",
+    "github",
+    "merge",
+    "merge-queue",
+    "pull-request"
+  ],
+  "homepage": "https://github.com/aldotestino/autoland#readme",
+  "bugs": {
+    "url": "https://github.com/aldotestino/autoland/issues"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aldotestino/autoland.git"
+  },
   "bin": {
     "autoland": "src/cli.ts"
   },
   "type": "module",
   "module": "src/cli.ts",
+  "publishConfig": {
+    "access": "public",
+    "directory": "dist/npm/autoland"
+  },
   "scripts": {
     "autoland": "bun src/cli.ts",
     "build": "bun build src/cli.ts --compile --outfile dist/autoland",
-    "test": "vitest run",
-    "lint": "oxlint",
-    "lint:fix": "oxlint --fix",
+    "build:npm": "bun scripts/build-npm.ts",
+    "changeset": "changeset",
     "fmt": "oxfmt",
     "fmt:check": "oxfmt --check",
+    "lint": "oxlint",
+    "lint:fix": "oxlint --fix",
+    "prepare": "effect-tsgo patch --typescript --oxlint --tsrs",
+    "release": "bun scripts/prepare-release.ts && changeset publish",
+    "test": "vitest run",
     "typecheck": "tsrs --noEmit",
-    "prepare": "effect-tsgo patch --typescript --oxlint --tsrs"
+    "version-packages": "changeset version && bun install"
   },
   "dependencies": {
     "@effect/platform-bun": "4.0.6",
@@ -24,6 +48,7 @@
     "effect": "4.0.6"
   },
   "devDependencies": {
+    "@changesets/cli": "^3.0.3",
     "@effect/tsgo": "0.63.0",
     "@effect/vitest": "4.0.6",
     "@types/bun": "1.4.4",
