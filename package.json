@@ -1,0 +1,33 @@
+{
+  "name": "effect-scratchpad",
+  "private": true,
+  "type": "module",
+  "module": "index.ts",
+  "scripts": {
+    "server:dev": "bun --watch src/server.ts",
+    "server": "bun src/server.ts",
+    "cli": "bun src/cli.ts",
+    "lint": "oxlint",
+    "lint:fix": "oxlint --fix",
+    "fmt": "oxfmt",
+    "fmt:check": "oxfmt --check",
+    "typecheck": "tsrs --noEmit",
+    "prepare": "effect-tsgo patch --typescript --oxlint --tsrs"
+  },
+  "dependencies": {
+    "@effect/platform-bun": "^4.1.1",
+    "effect": "^4.1.1"
+  },
+  "devDependencies": {
+    "@effect/tsgo": "0.63.0",
+    "@types/bun": "1.4.4",
+    "oxfmt": "^0.74.0",
+    "oxlint": "1.89.0",
+    "oxlint-tsgolint": "7.0.2005",
+    "tsrs": "0.20.1-ts7.1.0-beta",
+    "typescript": "^7.1.0-beta"
+  },
+  "peerDependencies": {
+    "typescript": "^7.0.2"
+  }
+}
