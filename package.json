@@ -1,6 +1,6 @@
 {
   "name": "@aldotestino/autoland",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Land a batch of pull requests in order, one at a time: update, wait for checks, approve, merge.",
   "keywords": [
     "cli",
