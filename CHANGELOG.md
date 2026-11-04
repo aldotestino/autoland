@@ -1,5 +1,11 @@
 # @aldotestino/autoland
 
+## 0.1.1
+
+### Patch Changes
+
+- 5e91b20: Keep PR numbers 1 and 0 when they follow `--dry-run`, `--yes` or `--non-interactive`. These flags used to read them as their own value, so `--dry-run 1 2` dropped PR #1 and `--dry-run 0 2` turned the dry run off.
+
 ## 0.1.0
 
 ### Minor Changes
