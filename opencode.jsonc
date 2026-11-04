@@ -5,5 +5,9 @@
       "repository": "https://github.com/Effect-TS/effect",
       "description": "Use this whenever there's any questions about effect or you need to know how to do something in effect.",
     },
+    "effect-boxes": {
+      "repository": "https://github.com/lloydrichards/effect-boxes",
+      "description": "Use this whenever there's any questions about effect-boxes or you need to lay out terminal UI output with it.",
+    },
   },
 }

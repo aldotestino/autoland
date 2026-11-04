@@ -1,68 +1,121 @@
+#!/usr/bin/env bun
 import { BunHttpClient, BunRuntime, BunServices } from "@effect/platform-bun";
-import { Console, Context, Effect, Layer, Schema } from "effect";
-import { Argument, Command } from "effect/cli";
+import { Effect, Layer, Runtime, Schema } from "effect";
+import { Argument, Command, Flag } from "effect/cli";
 import { Otlp, OtlpSerialization } from "effect/observability";
-import { RpcClient, RpcSerialization } from "effect/rpc";
-import { HelloRpcs } from "./api";
+import packageJson from "../package.json";
+import { runBatch } from "./batch";
+import { MergeMethod, UsageError } from "./domain";
+import { GitHub } from "./github";
+import { Agent } from "./opencode";
+import { Repair } from "./repair";
+import { Tty } from "./tty";
+import { Ui } from "./ui";
 
-class HelloClient extends Context.Service<HelloClient>()("effect-scratchpad/cli/HelloClient", {
-  make: RpcClient.make(HelloRpcs),
-}) {
-  static readonly layer = Layer.effect(this, this.make).pipe(
-    Layer.provide(
-      RpcClient.layerProtocolHttp({
-        url: "http://localhost:3000/rpc",
-      }),
-    ),
-    Layer.provide(RpcSerialization.layerJson),
-    Layer.provide(BunHttpClient.layer),
-  );
-}
+const Label = Schema.String.check(
+  Schema.isMinLength(1),
+  Schema.makeFilter((label: string) => !label.startsWith("--") || "Label must not be an option"),
+  Schema.makeFilter(
+    (label: string) => !label.includes(",") || "Pass each label with a separate --label option",
+  ),
+);
 
-const sayHello = Command.make(
-  "say-hello",
+const Timeout = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 999_999 }));
+
+const mergePrs = Command.make(
+  "autoland",
   {
-    name: Argument.String("name").pipe(
-      Argument.withDescription("Who to say hello to"),
-      Argument.withSchema(Schema.NonEmptyString),
+    prs: Argument.String("pr").pipe(
+      Argument.withDescription(
+        "PR numbers, #numbers, or pull request URLs, separated by spaces, commas, or newlines",
+      ),
+      Argument.variadic(),
+    ),
+    method: Flag.Literals("method", MergeMethod.literals).pipe(
+      Flag.withDescription("Merge method (default: squash)"),
+      Flag.withDefault("squash"),
+    ),
+    timeout: Flag.Int("timeout").pipe(
+      Flag.withDescription("Maximum wait per PR, in seconds (default: 1800)"),
+      Flag.withSchema(Timeout),
+      Flag.withDefault(1800),
+    ),
+    labels: Flag.String("label").pipe(
+      Flag.withDescription("Require this label (repeatable; all must match)"),
+      Flag.withSchema(Label),
+      Flag.atLeast(0),
+    ),
+    dryRun: Flag.Boolean("dry-run").pipe(
+      Flag.withDescription("Read-only preview; no updates, merges, or repairs"),
+      Flag.withDefault(false),
+    ),
+    yes: Flag.Boolean("yes").pipe(
+      Flag.withDescription("Skip the initial batch confirmation"),
+      Flag.withDefault(false),
+    ),
+    nonInteractive: Flag.Boolean("non-interactive").pipe(
+      Flag.withDescription("Skip all prompts and leave conflicts unmerged"),
+      Flag.withDefault(false),
     ),
   },
-  Effect.fn("Hello.SayHello")(function* ({ name }) {
-    const helloClient = yield* HelloClient;
-
-    const helloResult = yield* helloClient.SayHello({ name });
-
-    yield* Console.log(helloResult);
+  Effect.fn("autoland")(function* ({ dryRun, labels, method, nonInteractive, prs, timeout, yes }) {
+    yield* runBatch({
+      inputs: prs,
+      method,
+      timeoutSeconds: timeout,
+      labels,
+      dryRun,
+      yes: yes || nonInteractive,
+      interactive: !nonInteractive,
+    }).pipe(
+      Effect.provide(
+        Repair.layer.pipe(
+          Layer.provide(Agent.layer),
+          Layer.provideMerge(Tty.layer({ interactive: !nonInteractive })),
+          Layer.provideMerge(Ui.layer),
+          Layer.merge(GitHub.layer),
+          Layer.provide(BunHttpClient.layer),
+        ),
+      ),
+    );
   }),
-).pipe(Command.withDescription("Say Hello"));
-
-const helloCounter = Command.make(
-  "get-hello-count",
-  {},
-  Effect.fn("Hello.GetHelloCount")(function* () {
-    const helloClient = yield* HelloClient;
-
-    const helloCountResult = yield* helloClient.GetHelloCount();
-
-    yield* Console.log(helloCountResult);
-  }),
+).pipe(
+  Command.withDescription(
+    "Update, approve if needed, and merge a batch of pull requests in order, one at a time. " +
+      "Run from the target repository. Branch protections are never bypassed.",
+  ),
+  Command.withExamples([
+    { command: "autoland --dry-run 125 123 124", description: "Preview a batch" },
+    { command: "printf '125, 123\\n124\\n' | autoland", description: "Read the list from stdin" },
+    { command: "autoland --label ok-to-merge --label agent", description: "Merge by labels" },
+    { command: "autoland", description: "Choose from a list of open PRs" },
+  ]),
 );
 
 const Observability = Otlp.layerFromConfig({
   resource: {
-    serviceName: "scratchpad-cli",
+    serviceName: "autoland",
   },
 }).pipe(Layer.provide(OtlpSerialization.layerJson), Layer.provide(BunHttpClient.layer));
 
-const hello = Command.make("hello");
+// `runMain` treats both signals as an interruption, which exits with 130.
+let terminated = false;
+process.once("SIGTERM", () => {
+  terminated = true;
+});
 
-const CliLayer = Layer.mergeAll(HelloClient.layer, BunServices.layer, Observability);
-
-hello.pipe(
-  Command.withSubcommands([sayHello, helloCounter]),
-  Command.run({
-    version: "0.0.1",
-  }),
-  Effect.provide(CliLayer),
-  BunRuntime.runMain,
+mergePrs.pipe(
+  Command.run({ version: packageJson.version }),
+  // Help has already been rendered. Invalid input keeps the documented status.
+  Effect.catchTag("ShowHelp", (error) =>
+    error.errors.length === 0
+      ? Effect.void
+      : Effect.fail(new UsageError({ message: "Invalid command line" })),
+  ),
+  Effect.provide(Layer.merge(BunServices.layer, Observability)),
+  (program) =>
+    BunRuntime.runMain(program, {
+      teardown: (exit, onExit) =>
+        Runtime.defaultTeardown(exit, (code) => onExit(terminated && code === 130 ? 143 : code)),
+    }),
 );
