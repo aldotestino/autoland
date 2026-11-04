@@ -25,26 +25,32 @@ describe("parsePrTokens", () => {
     }),
   );
 
-  for (const bad of ["0", "abc", "1.5", "-3", "99999999999999999999", "#", "007"]) {
-    it.effect(`rejects ${bad}`, () =>
+  it.effect.each(["0", "abc", "1.5", "-3", "99999999999999999999", "#", "007"])(
+    "rejects %s",
+    (bad) =>
       Effect.gen(function* () {
         assert.isTrue(Exit.isFailure(yield* Effect.exit(parsePrTokens([bad], REPO))));
       }),
-    );
-  }
+  );
 });
 
-it("uniqueSorted removes duplicates and sorts numerically", () => {
-  assert.deepStrictEqual([...uniqueSorted([10, 9, 10, 100])], [9, 10, 100]);
-});
+it.effect("uniqueSorted removes duplicates and sorts numerically", () =>
+  Effect.sync(() => {
+    assert.deepStrictEqual([...uniqueSorted([10, 9, 10, 100])], [9, 10, 100]);
+  }),
+);
 
 describe("sanitizing untrusted text", () => {
-  it("removes control and format characters", () => {
-    assert.strictEqual(sanitize("a\u001b[31mb‮c\nd"), "a [31mb c d");
-  });
-  it("keeps line structure for multi-line text", () => {
-    assert.strictEqual(sanitizeText("a\n\tb\u001b[0m\u0007"), "a\n\tb [0m ");
-  });
+  it.effect("removes control and format characters", () =>
+    Effect.sync(() => {
+      assert.strictEqual(sanitize("a\u001b[31mb‮c\nd"), "a [31mb c d");
+    }),
+  );
+  it.effect("keeps line structure for multi-line text", () =>
+    Effect.sync(() => {
+      assert.strictEqual(sanitizeText("a\n\tb\u001b[0m\u0007"), "a\n\tb [0m ");
+    }),
+  );
 });
 
 describe("currentVotes", () => {
@@ -54,38 +60,46 @@ describe("currentVotes", () => {
     state,
   });
 
-  it("uses each reviewer's latest vote, ignoring comments and pending reviews", () => {
-    const votes = currentVotes([
-      review(1, 1, "APPROVED"),
-      review(2, 1, "COMMENTED"),
-      review(3, 2, "CHANGES_REQUESTED"),
-      review(4, 2, "APPROVED"),
-      review(5, 3, "PENDING"),
-    ]);
-    assert.deepStrictEqual(votes.map((vote) => vote.state).sort(), ["APPROVED", "APPROVED"]);
-  });
+  it.effect("uses each reviewer's latest vote, ignoring comments and pending reviews", () =>
+    Effect.sync(() => {
+      const votes = currentVotes([
+        review(1, 1, "APPROVED"),
+        review(2, 1, "COMMENTED"),
+        review(3, 2, "CHANGES_REQUESTED"),
+        review(4, 2, "APPROVED"),
+        review(5, 3, "PENDING"),
+      ]);
+      assert.deepStrictEqual(votes.map((vote) => vote.state).sort(), ["APPROVED", "APPROVED"]);
+    }),
+  );
 
-  it("does not count an approval that was later dismissed", () => {
-    const votes = currentVotes([review(9, 1, "DISMISSED"), review(1, 1, "APPROVED")]);
-    assert.deepStrictEqual(
-      votes.map((vote) => vote.state),
-      ["DISMISSED"],
-    );
-  });
+  it.effect("does not count an approval that was later dismissed", () =>
+    Effect.sync(() => {
+      const votes = currentVotes([review(9, 1, "DISMISSED"), review(1, 1, "APPROVED")]);
+      assert.deepStrictEqual(
+        votes.map((vote) => vote.state),
+        ["DISMISSED"],
+      );
+    }),
+  );
 });
 
 describe("OpenCode permission requests", () => {
-  it("only offers 'always' when the server can save the decision", () => {
-    const values = (save?: ReadonlyArray<string>) =>
-      permissionChoices({ action: "bash", resources: ["ls"], save }).map((c) => c.value);
-    assert.deepStrictEqual(values(), ["once", "reject"]);
-    assert.deepStrictEqual(values([]), ["once", "reject"]);
-    assert.deepStrictEqual(values(["ls *"]), ["once", "always", "reject"]);
-  });
+  it.effect("only offers 'always' when the server can save the decision", () =>
+    Effect.sync(() => {
+      const values = (save?: ReadonlyArray<string>) =>
+        permissionChoices({ action: "bash", resources: ["ls"], save }).map((c) => c.value);
+      assert.deepStrictEqual(values(), ["once", "reject"]);
+      assert.deepStrictEqual(values([]), ["once", "reject"]);
+      assert.deepStrictEqual(values(["ls *"]), ["once", "always", "reject"]);
+    }),
+  );
 
-  it("does not let the agent write escape sequences into the question", () => {
-    const question = permissionQuestion({ action: "b\u001bash", resources: ["x\u0007"] });
-    assert.notInclude(question, "\u001b");
-    assert.notInclude(question, "\u0007");
-  });
+  it.effect("does not let the agent write escape sequences into the question", () =>
+    Effect.sync(() => {
+      const question = permissionQuestion({ action: "b\u001bash", resources: ["x\u0007"] });
+      assert.notInclude(question, "\u001b");
+      assert.notInclude(question, "\u0007");
+    }),
+  );
 });
