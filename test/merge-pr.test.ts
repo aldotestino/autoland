@@ -9,6 +9,7 @@ import {
   type PullRequest,
   type RepoApi,
   type Review,
+  type ReviewStatus,
 } from "../src/github";
 import { processPr } from "../src/merge-pr";
 import { Repair, RepairFailed } from "../src/repair";
@@ -18,6 +19,8 @@ import { Ui } from "../src/ui";
 const HEAD = "a".repeat(40);
 const HEAD_2 = "b".repeat(40);
 const BASE = "c".repeat(40);
+const VIEWER = 99;
+const VIEWER_LOGIN = "me";
 
 const pull = (overrides: Partial<PullRequest> & { readonly sha?: string } = {}): PullRequest => ({
   state: "open",
@@ -44,6 +47,7 @@ interface Script {
   readonly behind?: ReadonlyArray<number>;
   readonly checks?: ReadonlyArray<ReadonlyArray<Check>>;
   readonly reviews?: ReadonlyArray<Review>;
+  readonly status?: Partial<ReviewStatus>;
   readonly approve?: Effect.Effect<void, GitHubError>;
   readonly merge?: Effect.Effect<void, GitHubError>;
   readonly tip?: ReadonlyArray<string>;
@@ -81,6 +85,14 @@ const run = (script: Script, options: Partial<Parameters<typeof processPr>[2]> =
         }),
       requiredChecks: () => Effect.sync(() => next(script.checks ?? [[]], checks++)),
       reviews: () => Effect.succeed(script.reviews ?? []),
+      reviewStatus: () =>
+        Effect.succeed({
+          decision: null,
+          viewerId: VIEWER,
+          viewerLogin: VIEWER_LOGIN,
+          pending: [],
+          ...script.status,
+        }),
       approve: (_, head) =>
         Effect.suspend(() => {
           calls.push(`approve:${head}`);
@@ -185,6 +197,114 @@ describe("processPr", () => {
         reviews: [{ id: 1, user: { id: 1 }, state: "APPROVED" }],
       });
       assert.deepStrictEqual(calls, [MERGE]);
+    }),
+  );
+
+  describe("while GitHub still requires a review", () => {
+    const waitingOn = (reviewer: string, codeOwner = true, team = false) =>
+      ({
+        decision: "REVIEW_REQUIRED",
+        pending: [{ reviewer, codeOwner, team }],
+      }) as const;
+    const someoneElse: Review = { id: 1, user: { id: 1 }, state: "APPROVED" };
+
+    it.effect("approves as the code owner even though someone else already has", () =>
+      Effect.gen(function* () {
+        const { calls, outcome } = yield* run({
+          pulls: [pull(), merged],
+          reviews: [someoneElse],
+          status: waitingOn(VIEWER_LOGIN),
+        });
+        assert.strictEqual(outcome, "done");
+        assert.deepStrictEqual(calls, [APPROVE, MERGE]);
+      }),
+    );
+
+    it.effect("leaves no stray approval when only another person can satisfy the rule", () =>
+      Effect.gen(function* () {
+        const { calls, outcome, output } = yield* run({
+          pulls: [pull()],
+          reviews: [someoneElse],
+          status: waitingOn("owner"),
+        });
+        assert.strictEqual(outcome, "unmerged");
+        assert.deepStrictEqual(calls, []);
+        assert.include(output, "another code owner must approve; skipped.");
+        assert.include(output, "waiting on @owner (code owner).");
+      }),
+    );
+
+    it.effect("approves when a requested code-owner team might include you", () =>
+      Effect.gen(function* () {
+        const { calls } = yield* run({
+          pulls: [pull(), merged],
+          status: waitingOn("acme/owners", true, true),
+        });
+        assert.deepStrictEqual(calls, [APPROVE, MERGE]);
+      }),
+    );
+
+    it.effect("approves when the only pending reviewer is not a code owner", () =>
+      Effect.gen(function* () {
+        const { calls } = yield* run({
+          pulls: [pull(), merged],
+          status: waitingOn("colleague", false),
+        });
+        assert.deepStrictEqual(calls, [APPROVE, MERGE]);
+      }),
+    );
+
+    it.effect("does not duplicate your own approval, and names who it waits on", () =>
+      Effect.gen(function* () {
+        const { calls, outcome, output } = yield* run({
+          pulls: [pull()],
+          reviews: [{ id: 2, user: { id: VIEWER }, state: "APPROVED" }],
+          status: waitingOn("owner"),
+          merge: fail("the base branch policy prohibits the merge"),
+        });
+        assert.strictEqual(outcome, "unmerged");
+        assert.deepStrictEqual(calls, [MERGE]);
+        assert.include(output, "your approval is already present.");
+        assert.include(output, "waiting on @owner (code owner).");
+      }),
+    );
+
+    it.effect("names who it waits on when you cannot approve your own PR", () =>
+      Effect.gen(function* () {
+        const { calls, outcome, output } = yield* run({
+          pulls: [pull()],
+          reviews: [someoneElse],
+          status: waitingOn("acme/owners", true, true),
+          approve: fail("Can not approve your own pull request"),
+        });
+        assert.strictEqual(outcome, "unmerged");
+        assert.deepStrictEqual(calls, [APPROVE]);
+        assert.include(output, "waiting on @acme/owners (code owner).");
+      }),
+    );
+  });
+
+  it.effect("does not vote once GitHub considers the PR approved", () =>
+    Effect.gen(function* () {
+      const { calls, output } = yield* run({
+        pulls: [pull(), merged],
+        reviews: [{ id: 1, user: { id: 1 }, state: "APPROVED" }],
+        status: { decision: "APPROVED" },
+      });
+      assert.deepStrictEqual(calls, [MERGE]);
+      assert.include(output, "approval already present.");
+    }),
+  );
+
+  it.effect("skips when GitHub reports changes requested", () =>
+    Effect.gen(function* () {
+      const { calls, outcome, output } = yield* run({
+        pulls: [pull()],
+        status: { decision: "CHANGES_REQUESTED" },
+      });
+      assert.strictEqual(outcome, "unmerged");
+      assert.deepStrictEqual(calls, []);
+      assert.include(output, "changes requested; skipped.");
     }),
   );
 

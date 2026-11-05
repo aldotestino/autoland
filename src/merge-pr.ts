@@ -1,7 +1,7 @@
 import { Clock, Effect, Option, Result } from "effect";
 import { Prompt } from "effect/cli";
 import type { BatchOptions } from "./domain";
-import { GitHub, type PullRequest, type Review } from "./github";
+import { GitHub, type PullRequest, type Review, type ReviewStatus } from "./github";
 import { Repair } from "./repair";
 import { Tty } from "./tty";
 import { Ui } from "./ui";
@@ -39,6 +39,44 @@ export const currentVotes = (reviews: ReadonlyArray<Review>): ReadonlyArray<Revi
 };
 
 /**
+ * Whether another approval from the authenticated account would be pointless.
+ * While GitHub still requires a review, someone else's approval settles nothing:
+ * it may not count towards a code-owner rule, and yours might.
+ */
+export const approvalSettled = (votes: ReadonlyArray<Review>, status: ReviewStatus): boolean => {
+  if (status.decision === "APPROVED") return true;
+  const relevant =
+    status.decision === null ? votes : votes.filter((vote) => vote.user.id === status.viewerId);
+  return relevant.some((vote) => vote.state === "APPROVED");
+};
+
+/**
+ * Whether an approval from the authenticated account could count. Only the person
+ * named can meet a code-owner request for someone else, so voting would just leave
+ * a stray approval. A requested team might include you, and listing its members
+ * needs more access than a reviewer is sure to have, so a team gets the vote.
+ */
+export const voteCanHelp = (status: ReviewStatus): boolean => {
+  if (status.decision !== "REVIEW_REQUIRED") return true;
+  const owners = status.pending.filter((request) => request.codeOwner);
+  return (
+    owners.length === 0 ||
+    owners.some((owner) => owner.team || owner.reviewer === status.viewerLogin)
+  );
+};
+
+/** What GitHub is waiting for, when that is a review. */
+export const missingReview = (status: ReviewStatus): string | undefined => {
+  if (status.decision !== "REVIEW_REQUIRED") return undefined;
+  const pending = status.pending.map(
+    ({ codeOwner, reviewer }) => `@${reviewer}${codeOwner ? " (code owner)" : ""}`,
+  );
+  return pending.length > 0
+    ? `GitHub still requires a review; waiting on ${pending.join(", ")}.`
+    : "GitHub still requires a review.";
+};
+
+/**
  * Takes one PR through update or repair, required checks, approval, and merge,
  * returning only once GitHub confirms the outcome. A merge may sit in a merge
  * queue, so a successful merge request is never treated as merged.
@@ -61,17 +99,38 @@ export const processPr = Effect.fn("processPr")(function* (
 
   let mergeRequested = false;
 
+  const logMissingReview = Effect.fn("logMissingReview")(function* (status: ReviewStatus) {
+    const missing = missingReview(status);
+    if (missing !== undefined) yield* ui.log(`PR #${number}: ${missing}`);
+  });
+
   /** Whether to go on and merge. A vote is only ever cast on the checked head. */
   const ensureApproval = Effect.fn("ensureApproval")(function* (head: string) {
     yield* ui.start(title("checking approvals"));
     const votes = currentVotes(yield* api.reviews(number));
-    if (votes.some((vote) => vote.state === "CHANGES_REQUESTED")) {
+    const status = yield* api.reviewStatus(number);
+    if (
+      status.decision === "CHANGES_REQUESTED" ||
+      votes.some((vote) => vote.state === "CHANGES_REQUESTED")
+    ) {
       yield* ui.finish(false, title("changes requested; skipped."));
       return false;
     }
-    if (votes.some((vote) => vote.state === "APPROVED")) {
-      yield* ui.finish(true, title("approval already present."));
+    if (approvalSettled(votes, status)) {
+      yield* ui.finish(
+        true,
+        title(
+          status.decision === "REVIEW_REQUIRED"
+            ? "your approval is already present."
+            : "approval already present.",
+        ),
+      );
       return true;
+    }
+    if (!voteCanHelp(status)) {
+      yield* ui.finish(false, title("another code owner must approve; skipped."));
+      yield* logMissingReview(status);
+      return false;
     }
     yield* ui.finish(true, title("approval check complete."));
     yield* ui.start(title("approving as your authenticated gh account"));
@@ -82,6 +141,7 @@ export const processPr = Effect.fn("processPr")(function* (
       yield* ui.error(
         `PR #${number}: approval failed; skipped. GitHub does not allow approval of your own PR.`,
       );
+      yield* logMissingReview(status);
       return false;
     }
     yield* ui.finish(true, title("approved as your authenticated gh account."));
@@ -253,6 +313,9 @@ export const processPr = Effect.fn("processPr")(function* (
         continue;
       }
       yield* ui.log(`PR #${number}: merge blocked; skipped (no protection bypass).`);
+      // Only explains the outcome, so failing to read it must not change that outcome.
+      const review = yield* Effect.result(api.reviewStatus(number));
+      if (Result.isSuccess(review)) yield* logMissingReview(review.success);
       return "unmerged" as const;
     }
 
