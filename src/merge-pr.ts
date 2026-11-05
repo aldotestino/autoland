@@ -51,13 +51,17 @@ export const approvalSettled = (votes: ReadonlyArray<Review>, status: ReviewStat
 };
 
 /**
- * Whether an approval from the authenticated account could count. Only the person
- * named can meet a code-owner request for someone else, so voting would just leave
- * a stray approval. A requested team might include you, and listing its members
- * needs more access than a reviewer is sure to have, so a team gets the vote.
+ * Whether an approval from the authenticated account is worth casting. A code-owner
+ * request only says CODEOWNERS assigned the reviewer, not that a rule requires them,
+ * and reading the rule can need admin access. So with no approval yet, always vote:
+ * yours may be all the branch needs. An approval that has not satisfied GitHub is the
+ * sign that a code owner is required, and then only a pending owner's vote can help.
+ * A requested team might include you, and listing its members needs more access than
+ * a reviewer is sure to have, so a team gets the vote.
  */
-export const voteCanHelp = (status: ReviewStatus): boolean => {
+export const voteCanHelp = (votes: ReadonlyArray<Review>, status: ReviewStatus): boolean => {
   if (status.decision !== "REVIEW_REQUIRED") return true;
+  if (!votes.some((vote) => vote.state === "APPROVED")) return true;
   const owners = status.pending.filter((request) => request.codeOwner);
   return (
     owners.length === 0 ||
@@ -127,8 +131,8 @@ export const processPr = Effect.fn("processPr")(function* (
       );
       return true;
     }
-    if (!voteCanHelp(status)) {
-      yield* ui.finish(false, title("another code owner must approve; skipped."));
+    if (!voteCanHelp(votes, status)) {
+      yield* ui.finish(false, title("waiting on another code owner; skipped."));
       yield* logMissingReview(status);
       return false;
     }

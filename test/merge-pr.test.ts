@@ -229,8 +229,19 @@ describe("processPr", () => {
         });
         assert.strictEqual(outcome, "unmerged");
         assert.deepStrictEqual(calls, []);
-        assert.include(output, "another code owner must approve; skipped.");
+        assert.include(output, "waiting on another code owner; skipped.");
         assert.include(output, "waiting on @owner (code owner).");
+      }),
+    );
+
+    it.effect("approves when nobody has, since CODEOWNERS may only be assigning reviewers", () =>
+      Effect.gen(function* () {
+        const { calls, outcome } = yield* run({
+          pulls: [pull(), merged],
+          status: waitingOn("owner"),
+        });
+        assert.strictEqual(outcome, "done");
+        assert.deepStrictEqual(calls, [APPROVE, MERGE]);
       }),
     );
 
@@ -238,6 +249,7 @@ describe("processPr", () => {
       Effect.gen(function* () {
         const { calls } = yield* run({
           pulls: [pull(), merged],
+          reviews: [someoneElse],
           status: waitingOn("acme/owners", true, true),
         });
         assert.deepStrictEqual(calls, [APPROVE, MERGE]);
@@ -248,6 +260,7 @@ describe("processPr", () => {
       Effect.gen(function* () {
         const { calls } = yield* run({
           pulls: [pull(), merged],
+          reviews: [someoneElse],
           status: waitingOn("colleague", false),
         });
         assert.deepStrictEqual(calls, [APPROVE, MERGE]);
