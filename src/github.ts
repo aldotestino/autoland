@@ -55,6 +55,67 @@ export const Review = Schema.Struct({
 });
 export type Review = typeof Review.Type;
 
+const ReviewStatusResponse = Schema.Struct({
+  data: Schema.Struct({
+    viewer: Schema.Struct({ databaseId: Schema.Number, login: Schema.String }),
+    repository: Schema.Struct({
+      pullRequest: Schema.Struct({
+        // Null when the base branch requires no review.
+        reviewDecision: Schema.NullOr(
+          Schema.Literals(["APPROVED", "CHANGES_REQUESTED", "REVIEW_REQUIRED"]),
+        ),
+        reviewRequests: Schema.Struct({
+          nodes: Schema.Array(
+            Schema.Struct({
+              asCodeOwner: Schema.Boolean,
+              // A user, bot or mannequin has a login; a team has a combined slug.
+              requestedReviewer: Schema.NullOr(
+                Schema.Struct({
+                  login: Schema.optional(Schema.String),
+                  combinedSlug: Schema.optional(Schema.String),
+                }),
+              ),
+            }),
+          ),
+        }),
+      }),
+    }),
+  }),
+});
+
+const REVIEW_STATUS_QUERY = `query($owner: String!, $name: String!, $number: Int!) {
+  viewer { databaseId login }
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      reviewDecision
+      reviewRequests(first: 100) {
+        nodes {
+          asCodeOwner
+          requestedReviewer {
+            ... on User { login }
+            ... on Bot { login }
+            ... on Mannequin { login }
+            ... on Team { combinedSlug }
+          }
+        }
+      }
+    }
+  }
+}`;
+
+/** GitHub's verdict on a PR's reviews, which knows the rules that a list of votes cannot. */
+export interface ReviewStatus {
+  readonly decision: "APPROVED" | "CHANGES_REQUESTED" | "REVIEW_REQUIRED" | null;
+  /** The authenticated account, comparable to `Review["user"]["id"]`. */
+  readonly viewerId: number;
+  readonly viewerLogin: string;
+  readonly pending: ReadonlyArray<{
+    readonly reviewer: string;
+    readonly codeOwner: boolean;
+    readonly team: boolean;
+  }>;
+}
+
 export const Check = Schema.Struct({
   bucket: Schema.Literals(["pass", "skipping", "fail", "cancel", "pending"]),
   name: Schema.String,
@@ -78,6 +139,7 @@ export interface RepoApi {
   readonly updateBranch: (number: number, head: string) => Effect.Effect<void, GitHubError>;
   readonly requiredChecks: (number: number) => Effect.Effect<ReadonlyArray<Check>, GitHubError>;
   readonly reviews: (number: number) => Effect.Effect<ReadonlyArray<Review>, GitHubError>;
+  readonly reviewStatus: (number: number) => Effect.Effect<ReviewStatus, GitHubError>;
   /** Pinned to `head`, so a concurrent push cannot inherit an unchecked approval. */
   readonly approve: (number: number, head: string) => Effect.Effect<void, GitHubError>;
   /** Success can mean queued rather than merged, so callers must poll for `merged`. */
@@ -241,6 +303,41 @@ export class GitHub extends Context.Service<
             Effect.flatMap(decode(Pages(Review), "Invalid reviews response; leaving PR unmerged.")),
             Effect.map((pages) => pages.flat()),
           ),
+
+        reviewStatus: (number) => {
+          const [owner = "", name = ""] = repo.split("/");
+          return stdout([
+            "api",
+            "graphql",
+            "-f",
+            `query=${REVIEW_STATUS_QUERY}`,
+            "-f",
+            `owner=${owner}`,
+            "-f",
+            `name=${name}`,
+            "-F",
+            `number=${number}`,
+          ]).pipe(
+            Effect.flatMap(
+              decode(ReviewStatusResponse, "Invalid review status response; leaving PR unmerged."),
+            ),
+            Effect.map(({ data }) => {
+              const pullRequest = data.repository.pullRequest;
+              return {
+                decision: pullRequest.reviewDecision,
+                viewerId: data.viewer.databaseId,
+                viewerLogin: data.viewer.login,
+                pending: pullRequest.reviewRequests.nodes.flatMap((request) => {
+                  const team = request.requestedReviewer?.combinedSlug;
+                  const reviewer = request.requestedReviewer?.login ?? team;
+                  return reviewer === undefined
+                    ? []
+                    : [{ reviewer, codeOwner: request.asCodeOwner, team: team !== undefined }];
+                }),
+              };
+            }),
+          );
+        },
 
         approve: (number, head) =>
           stdout([

@@ -98,7 +98,9 @@ const printPlan = Effect.fn("printPlan")(function* (
 ) {
   const ui = yield* Ui;
   yield* ui.log(`Repository: ${repo}\nMethod: ${options.method}`);
-  yield* ui.log("Approval: approve as your gh account if no current approval exists.");
+  yield* ui.log(
+    "Approval: approve as your gh account if GitHub still requires a review and you have not approved.",
+  );
   if (options.labels.length > 0) {
     yield* ui.log(`Labels (all required): ${options.labels.join(",")}`);
   }
